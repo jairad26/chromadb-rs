@@ -14,11 +14,6 @@ version = "0.22"
 features = ["derive"]
 version = "1"
 
-[dependencies.minreq]
-version = "2"
-default-features = false
-features = ["https-rustls", "json-using-serde"]
-
 [dependencies.anyhow]
 version = "1"
 

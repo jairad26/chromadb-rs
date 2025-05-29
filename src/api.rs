@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-use base64::prelude::*;
 use reqwest::{Client, Method, Response};
 use serde_json::Value;
 
@@ -17,13 +16,9 @@ pub enum ChromaTokenHeader {
 #[derive(Clone, Debug)]
 pub enum ChromaAuthMethod {
     None,
-    BasicAuth {
-        username: String,
-        password: String,
-    },
     TokenAuth {
-        token: String,
         header: ChromaTokenHeader,
+        token: String,
     },
 }
 
@@ -37,20 +32,12 @@ impl Default for ChromaAuthMethod {
 pub(super) struct APIClientAsync {
     client_pool: Mutex<VecDeque<Arc<Client>>>,
     api_endpoint: String,
-    api_endpoint_v1: String,
     auth_method: ChromaAuthMethod,
     tenant: String,
     database: String,
     await_connection: Condvar,
     connections_alloc: AtomicUsize,
     connections_total: AtomicUsize,
-}
-
-#[derive(serde::Deserialize)]
-pub(crate) struct UserIdentity {
-    pub tenant: String,
-    #[allow(dead_code)]
-    pub databases: Vec<String>,
 }
 
 impl APIClientAsync {
@@ -68,7 +55,6 @@ impl APIClientAsync {
         Self {
             client_pool,
             api_endpoint: format!("{}/api/v2", endpoint),
-            api_endpoint_v1: format!("{}/api/v1", endpoint),
             auth_method,
             tenant,
             database,
@@ -111,20 +97,10 @@ impl APIClientAsync {
     }
 
     /// GET from a v1-scoped path.
-    pub async fn get_v1(&self, path: &str) -> Result<Response> {
+    pub async fn get(&self, path: &str) -> Result<Response> {
         assert!(path.starts_with('/'));
-        let url = format!("{}{}", self.api_endpoint_v1, path);
+        let url = format!("{}{}", self.api_endpoint, path);
         self.send_request(Method::GET, &url, None).await
-    }
-
-    /// Hit the auth endpoint to resolve tenant and database prior to instantiating a client.
-    pub async fn get_auth(url: &str, auth: &ChromaAuthMethod) -> Result<UserIdentity> {
-        let url = format!("{}/api/v2/auth/identity", url);
-        let client = Client::new();
-        let request = client.request(Method::GET, url);
-        let resp = Self::send_request_no_self(request, auth, None).await?;
-        let user_identity: UserIdentity = resp.json().await?;
-        Ok(user_identity)
     }
 
     async fn send_request(
@@ -173,10 +149,6 @@ impl APIClientAsync {
         // Add auth headers if needed
         match &auth_method {
             ChromaAuthMethod::None => {}
-            ChromaAuthMethod::BasicAuth { username, password } => {
-                let credentials = BASE64_STANDARD.encode(format!("{username}:{password}"));
-                request = request.header("Authorization", format!("Basic {credentials}"));
-            }
             ChromaAuthMethod::TokenAuth { token, header } => match header {
                 ChromaTokenHeader::Authorization => {
                     request = request.header("Authorization", format!("Bearer {token}"));

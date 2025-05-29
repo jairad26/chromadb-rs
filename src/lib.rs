@@ -1,8 +1,10 @@
 //! [ChromaDB](https://www.trychroma.com/) client library for Rust.
 //!
-//! The library provides 2 modules to interact with the ChromaDB server via the API:
+//! The library provides 4 modules to interact with the ChromaDB server via the API:
 //! * `client` - To interface with the ChromaDB server.
 //! * `collection` - To interface with an associated ChromaDB collection.
+//! * `filters` - Type-safe filtering for metadata and document content.
+//! * `config` - Configuration for creating collections.
 //!
 //! ### Instantiating [ChromaClient](crate::ChromaClient)
 //! ```
@@ -23,6 +25,8 @@
 //! let client: ChromaClient = ChromaClient::new(ChromaClientOptions {
 //!     url: Some("<CHROMADB_URL>".to_string()),
 //!     database: "<DATABASE>".to_string(),
+//!     tenant: "default_tenant".to_string(),
+//!     connections: 4,
 //!     auth
 //! }).await.unwrap();
 //!
@@ -36,10 +40,11 @@
 //! ```
 //!# use chromadb::ChromaClient;
 //!# use chromadb::collection::{ChromaCollection, GetResult, CollectionEntries, GetOptions};
+//!# use chromadb::filters::*;
 //!# use serde_json::json;
 //!# async fn doc_client_create_collection(client: &ChromaClient) -> anyhow::Result<()> {
 //! // Get or create a collection with the given name and no metadata.
-//! let collection: ChromaCollection = client.get_or_create_collection("my_collection", None).await?;
+//! let collection: ChromaCollection = client.get_or_create_collection("my_collection", None, None).await?;
 //!
 //! // Get the UUID of the collection
 //! let collection_uuid = collection.id();
@@ -59,9 +64,7 @@
 //! let result  = collection.upsert(collection_entries, None).await?;
 //!
 //! // Create a filter object to filter by document content.
-//! let where_document = json!({
-//!    "$contains": "Superman"
-//!     });
+//! let where_document = contains("Superman");
 //!
 //! // Get embeddings from a collection with filters and limit set to 1.
 //! // An empty IDs vec will return all embeddings.
@@ -82,6 +85,27 @@
 //! ```
 //!Find more information about on the available filters and options in the [get()](crate::ChromaCollection::get) documentation.
 //!
+//! ### Type-safe Filtering
+//! ```
+//!# use chromadb::filters::*;
+//!# use serde_json::json;
+//!# fn doc_filters_demo() {
+//! // Simple equality filter
+//! let filter = eq("status", "active");
+//!
+//! // Complex filters with logical operators
+//! let complex_filter = and_metadata(vec![
+//!     eq("category", "tech"),
+//!     gte("rating", 4.0)
+//! ]);
+//!
+//! // Document content filters
+//! let doc_filter = and_doc(vec![
+//!     contains("AI"),
+//!     not_contains("deprecated")
+//! ]);
+//!# }
+//! ```
 //!
 //! ### Perform a similarity search.
 //! ```
@@ -117,7 +141,7 @@
 //!# use serde_json::json;
 //!# async fn doc_client_create_collection(client: &ChromaClient) -> anyhow::Result<()> {
 //! let collection: ChromaCollection = client.get_or_create_collection("openai_collection",
-//! None).await?;
+//! None, None).await?;
 //!
 //! let collection_entries = CollectionEntries {
 //!   ids: vec!["demo-id-1", "demo-id-2"],
@@ -144,7 +168,7 @@
 //!# use chromadb::embeddings::bert::{SentenceEmbeddingsBuilder, SentenceEmbeddingsModelType};
 //!# async fn doc_client_create_collection(client: &ChromaClient) -> anyhow::Result<()> {
 //! let collection: ChromaCollection = client.get_or_create_collection("sbert_collection",
-//! None).await?;
+//! None, None).await?;
 //!
 //! let collection_entries = CollectionEntries {
 //!   ids: vec!["demo-id-1", "demo-id-2"],
@@ -168,6 +192,8 @@
 pub mod client;
 pub mod collection;
 pub mod embeddings;
+pub mod filters;
+pub mod config;
 
 mod api;
 mod commons;

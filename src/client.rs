@@ -5,6 +5,7 @@ pub use super::api::{ChromaAuthMethod, ChromaTokenHeader};
 use super::{
     api::APIClientAsync,
     commons::{Metadata, Result},
+    config::CreateCollectionConfiguration,
     ChromaCollection,
 };
 
@@ -26,6 +27,8 @@ pub struct ChromaClientOptions {
     pub url: Option<String>,
     /// Authentication to use to connect to the Chroma Server.
     pub auth: ChromaAuthMethod,
+    /// The tenant to use for the client.
+    pub tenant: String,
     /// Database to use for the client.  Must be a valid database and match the authorization.
     pub database: String,
     /// Number of concurrent connections to open to the Chroma Server.
@@ -37,9 +40,55 @@ impl Default for ChromaClientOptions {
         Self {
             url: None,
             auth: ChromaAuthMethod::None,
+            tenant: "default_tenant".to_string(),
             database: "default_database".to_string(),
             connections: 4,
         }
+    }
+}
+
+impl ChromaClientOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn url<S: Into<String>>(mut self, url: S) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    pub fn auth(mut self, auth: ChromaAuthMethod) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    pub fn tenant<S: Into<String>>(mut self, tenant: S) -> Self {
+        self.tenant = tenant.into();
+        self
+    }
+
+    pub fn database<S: Into<String>>(mut self, database: S) -> Self {
+        self.database = database.into();
+        self
+    }
+
+    pub fn connections(mut self, connections: usize) -> Self {
+        self.connections = connections;
+        self
+    }
+
+    pub fn token_auth<S: Into<String>>(self, token: S) -> Self {
+        self.auth(ChromaAuthMethod::TokenAuth {
+            header: ChromaTokenHeader::Authorization,
+            token: token.into(),
+        })
+    }
+
+    pub fn x_chroma_token<S: Into<String>>(self, token: S) -> Self {
+        self.auth(ChromaAuthMethod::TokenAuth {
+            header: ChromaTokenHeader::XChromaToken,
+            token: token.into(),
+        })
     }
 }
 
@@ -50,6 +99,7 @@ impl ChromaClient {
         ChromaClientOptions {
             url,
             auth,
+            tenant,
             database,
             connections,
         }: ChromaClientOptions,
@@ -61,12 +111,11 @@ impl ChromaClient {
                 .unwrap_or(std::env::var("CHROMA_URL").unwrap_or(DEFAULT_ENDPOINT.to_string()))
         };
 
-        let user_identity = APIClientAsync::get_auth(&endpoint, &auth).await?;
         Ok(ChromaClient {
             api: Arc::new(APIClientAsync::new(
                 endpoint,
                 auth,
-                user_identity.tenant,
+                tenant,
                 database,
                 connections,
             )),
@@ -80,6 +129,7 @@ impl ChromaClient {
     ///
     /// * `name` - The name of the collection to create
     /// * `metadata` - Optional metadata to associate with the collection. Must be a JSON object with keys and values that are either numbers, strings or floats.
+    /// * `configuration` - Optional configuration for the collection indexing (HNSW, SPANN, etc.)
     /// * `get_or_create` - If true, return the existing collection if it exists
     ///
     /// # Errors
@@ -90,6 +140,7 @@ impl ChromaClient {
         &self,
         name: &str,
         metadata: Option<Metadata>,
+        configuration: Option<CreateCollectionConfiguration>,
         get_or_create: bool,
     ) -> Result<ChromaCollection> {
         if get_or_create {
@@ -99,10 +150,17 @@ impl ChromaClient {
                 return Ok(collection.clone());
             }
         }
+        
+        let config = match configuration {
+            Some(config) => config.to_configuration()?,
+            None => serde_json::Map::new(),
+        };
+        
         let request_body = json!({
             "name": name,
             "metadata": metadata,
             "get_or_create": get_or_create,
+            "configuration": config,
         });
         let response = self
             .api
@@ -124,6 +182,7 @@ impl ChromaClient {
     ///
     /// * `name` - The name of the collection to get or create
     /// * `metadata` - Optional metadata to associate with the collection. Must be a JSON object with keys and values that are either numbers, strings or floats.
+    /// * `configuration` - Optional configuration for the collection indexing (HNSW, SPANN, etc.)
     ///
     /// # Errors
     ///
@@ -132,8 +191,9 @@ impl ChromaClient {
         &self,
         name: &str,
         metadata: Option<Metadata>,
+        configuration: Option<CreateCollectionConfiguration>,
     ) -> Result<ChromaCollection> {
-        self.create_collection(name, metadata, true).await
+        self.create_collection(name, metadata, configuration, true).await
     }
 
     /// List all collections
@@ -189,14 +249,14 @@ impl ChromaClient {
 
     /// The version of Chroma
     pub async fn version(&self) -> Result<String> {
-        let response = self.api.get_v1("/version").await?;
+        let response = self.api.get("/version").await?;
         let version = response.json::<String>().await?;
         Ok(version)
     }
 
     /// Get the current time in nanoseconds since epoch. Used to check if the server is alive.
     pub async fn heartbeat(&self) -> Result<u64> {
-        let response = self.api.get_v1("/heartbeat").await?;
+        let response = self.api.get("/heartbeat").await?;
         let json = response.json::<HeartbeatResponse>().await?;
         Ok(json.heartbeat)
     }
@@ -236,7 +296,7 @@ mod tests {
         let client: ChromaClient = ChromaClient::new(Default::default()).await.unwrap();
 
         let result = client
-            .create_collection(TEST_COLLECTION, None, true)
+            .create_collection(TEST_COLLECTION, None, None, true)
             .await
             .unwrap();
         assert_eq!(result.name(), TEST_COLLECTION);
@@ -249,7 +309,7 @@ mod tests {
         const GET_TEST_COLLECTION: &str = "100-recipes-for-octopus";
 
         client
-            .create_collection(GET_TEST_COLLECTION, None, true)
+            .create_collection(GET_TEST_COLLECTION, None, None, true)
             .await
             .unwrap();
 
@@ -271,7 +331,7 @@ mod tests {
 
         const DELETE_TEST_COLLECTION: &str = "6-recipies-for-octopus";
         client
-            .get_or_create_collection(DELETE_TEST_COLLECTION, None)
+            .get_or_create_collection(DELETE_TEST_COLLECTION, None, None)
             .await
             .unwrap();
 
